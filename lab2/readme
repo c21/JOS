@@ -1,0 +1,25 @@
+1.physical memory management
+  kern/pmap.c: boot_alloc(), mem_init(), page_init(), page_alloc(), page_free()
+  (1).get physical memory size
+      get size (npages) by using in/out instruction to interact with CMOS hardware.
+  (2).manage physical memory for each page (4KB)
+      first find a continuous memory (at end of bss: boot_alloc(): pages) to hold each page's
+      allocation information (struct PageInfo), use a pointer to link them together (page_free_list)
+
+2.virtual memory management
+  kern/pmap.c: pgdir_walk(), boot_map_region(), page_lookup(), page_remove(), page_insert()
+  read chapter 5 and 6 on: https://pdos.csail.mit.edu/6.828/2014/readings/i386/toc.htm
+  virtual address       ->        linear address       ->         physical address
+                  (segmentation)                    (paging)
+  (1).allocate a page for page directory
+      kern_pgdir
+  (2).initialize new page table (directory)
+      map kernel stack, and all kernel virtual address.
+  page directory/table entry flags:
+  PTE_P: page directory/table entry is valid (1) or not (0)
+  PTE_W: the page pointed by entry is writable (1) or not (0): default all pages are readable.
+  PTE_U: the page pointed by entry is readable/writable by user (1) or not(0).
+   
+  *flush/invalidate TLB: (remove a page directory entry or table entry from TLB):
+    (1).change value of cr3 (page directory base register) (overkill, flush all TLB)
+    (2).instruction: invlpg vaddr (remove TLB entries containing address vaddr)

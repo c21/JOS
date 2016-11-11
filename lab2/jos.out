@@ -1,0 +1,14 @@
+*** Now run 'make gdb'.
+***
+Could not access KVM kernel module: No such file or directory
+failed to initialize KVM: No such file or directory
+Back to tcg accelerator.
+6828 decimal is 15254 octal!
+Physical memory: 66556K available, base = 640K, extended = 65532K
+check_page_alloc() succeeded!
+check_page() succeeded!
+check_kern_pgdir() succeeded!
+check_page_installed_pgdir() succeeded!
+Welcome to the JOS kernel monitor!
+Type 'help' for a list of commands.
+qemu: terminating on signal 15 from pid 9087
