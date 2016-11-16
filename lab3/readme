@@ -1,0 +1,36 @@
+User Environments and Exception Handling
+  GCC inline assembly: http://www.ibiblio.org/gferg/ldp/GCC-Inline-Assembly-HOWTO.html
+    asm ( assembly code
+        : output operands                  /* optional */
+        : input operands                   /* optional */
+        : list of clobbered registers      /* optional */
+        );
+  (1).create environment (process) array
+  (2).use one environment, create a page for its page directory, initialize its page directory
+      (kernel part: >=UTOP as same as kernel's page directory), load its ELF executable (code, data, ...)
+      to its user part of virtual address. 
+  (3).interrupt/exception handling
+      read: https://pdos.csail.mit.edu/6.828/2014/readings/i386/c09.htm
+      set up interrupt descriptor table (IDT), each entry has the selector and offset for the
+      code to run. (totally 256 interrupt number: 0-255 entries), store the beginning address of IDT
+      at interrupt descriptor table register (IDTR).
+ 
+      When a user environment/process has an interrupt/exception:
+      (1).switch current stack to the stack defined in TSS
+      (2).push process's stack, flag, instruction registers on stack
+          +--------------------+ KSTACKTOP             
+          | 0x00000 | old SS   |     " - 4
+          |      old ESP       |     " - 8
+          |     old EFLAGS     |     " - 12
+          | 0x00000 | old CS   |     " - 16
+          |      old EIP       |     " - 20
+          |     error code     |     " - 24 (optional) <---- ESP
+          +--------------------+
+      (3).run code indicated by interrupt descriptor table (IDT)
+      * several interrupts:
+      3: breakpoint
+      14: page fault
+      >=17: unused interrupt (we can choose one, for example 0x30 as system call)
+            user stores arguments of system call in registers, uses "int 0x30" instruction to trap into OS.
+            OS needs to set up corresponding interrupt handler for 0x30 at interrupt descriptor table (IDT).
+            For the pointer passed from system call, check pointer value before dereference.   
