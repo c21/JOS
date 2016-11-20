@@ -1,0 +1,70 @@
+1.Multiprocessor Support and Cooperative Multitasking
+  (1).Operating system reads from BIOS to get CPUs information
+      (kern/mpconfig.c)
+      OS reads from BIOS's MP Configuration Table to get number of CPUs,
+      and the start physical address of local APICs for CPUs.
+
+      *read Chapter 4 of https://pdos.csail.mit.edu/6.828/2014/readings/ia32/MPspec.pdf
+      multiprocessor model (symmetric multiprocessing)
+      bootstrap processor (BSP): initialize the operating system
+      application processors (APs): activated by BSP
+    
+      Hardware has advanced programmable interrupt controller (APIC) to handle interrupt.
+      Each CPU has a local unit (local APIC). All CPUs shares an I/O unit (I/O APIC).
+      I/O APIC: distribute interrupts to local APICs.
+      local APIC: send interrupt to CPU, also have interprocessor interrupt (IPI), to
+                  allow its processor interrupt any other processor. 
+  (2).Map local APICs' physical address to virtual address
+      Use virtual address to interact with local APICs by memory-mapped I/O.
+  (3).bootstrap processor (BSP) loads application processors'(APs) boot code into memory,
+      sets up APs' stack, then sends interrupt to APs, each AP will run boot code. Each processor
+      eventually runs each OS.
+  (4).make a lock (spin lock) between CPUs in kernel mode, such that only one CPU can run kernel
+      code at a single time point (avoid race conditions in kernel code). CPU will release lock
+      when going to back to user mode. So multiple processes in user mode on different CPUs can
+      run at the same time.
+  (5).switch from kernel to user mode (schedule a runnable process)
+      according to process/environment's trap frame (record process's all registers information),
+      change from kernel's stack to user's stack, restore process's all registers information.
+
+      context switch between processes:
+      p1 -> kernel (hardware changes from user's stack to kernel's stack according TSS in GDT,
+                    and pushes p1's cs, eip, ss, esp, eflags on kernel's stack, then runs kernel's
+                    corresponding interrupt handler according to IDT)
+      kernel -> p2 (kernel pushes more p1's registers on kernel stack, stores p1's all registers value
+                    in p1's process table entry (trap frame). According to p2's trap frame in p2's
+                    process table entry, restores p2's all registers, issues iret instruction to let
+                    hardware switches back p2's user stack and instruction)
+                
+  * all processors (CPUs) share the same memory, run different instructions at the same time,
+    have their own different registers.
+
+2.Copy-on-Write Fork
+  (1).handle page fault in user mode
+      when there's an interrupt in user mode, it will trap into OS to its interrupt handler.
+      Interrupt handler will set up a stack for process itself to handle interrupt (user exception stack).
+      Interrupt handler will push trap frame on user exception stack, go back to user's interrupt handler.
+      User's interrupt handler will handle interrupt in user mode (when critical operation, use system call),
+      then directly go back to user's normal instruction.         
+  (2).implement copy-on-write fork
+      traditional fork drawback: fork will allocate memory for child process, then copy all memory from parent
+        process to child process. shell always use fork() then exec() (copy totally wastes time in this case).
+
+      copy-on-write: only copy page tables from parent to child process. Mark all page which is writable to
+        not writable, but copy-on-write. Then write a page fault handler in user mode. When a write operation
+        trapped to page fault handler, the handler allocates new page for the process, mark new page as writable.
+ 
+  * call convention:
+    caller function: 1. push arguments in reverse order on stack (argN, argN-1, ..., arg0).
+                     2. call instruction (push return address on stack).
+    callee function: 1. push caller's ebp on stack, set new ebp as current stack top (esp).
+                     2. ret instruction (pop return address from stack, then jump to return address).
+
+3.Preemptive Multitasking and Inter-Process communication (IPC)
+  (1).time interrupt
+      External interrupt is called IRQ (16 possible IRQs 0-15). To handle external interrupt (e.g. time
+      interrupt), register interrupt handler (as before) in IDT. To enable time interrupt, set interrupt
+      flag to 1 in eflags register. In JOS, we only enable time interrupt in user mode.
+  (2).Inter-Process communication (IPC)
+      Implement two system calls: sys_ipc_try_send, and sys_ipc_recv to pass message by allowing one
+      physical page mapped in two process's virtual memory.
