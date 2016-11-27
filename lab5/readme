@@ -1,0 +1,39 @@
+1.The File System
+  (1).Structure
+      read/write unit: block (4KB).
+      superblock, bitmap (data block), data block.
+      on disk: block 0 (boot sector), block 1 (superblock), block 2...x (free block bitmap), block x+1... (data block)
+      superblock (struct Super): store number of blocks on disk, and root directory's metadata.
+      directory/file metadata (struct File): file name, size, type, pointer to data blocks (direct and indirect pointer) 
+      directory stores files metadata (not support hard link, store file metadata directly in directory, so not use inode)
+  (2).Run file system as a process/environment
+      Instead of putting file system in kernel, run file system as a process in user mode (fs/serv.c). 
+      (1).Give file system process privilege to do in/out instructions to access disk
+          Change user process's eflags IOPL bits, set it to 3, enable user process can do in/out instructions.
+      (2).Use file system process's memory 0x10000000 - 0xD0000000 (3GB) to map disk block 0-N.
+          block cache (fs/bc.c): read disk block by registering its own page fault handler.
+                                 write disk block by explicit calling function and its block/page dirty bit is set.
+          Use bitmap (one bit per block) to indicate the block is in use or not.
+      (3).Other process calls file system process's functions
+          Use IPC to pass function arguments and return values. File system is a loop to wait for IPC, processes IPC,
+          then returns value (can also be viewed as a kind of RPC).
+      (4).File descriptor for each file in each process
+          Each process has a memory area for file descriptor table. Each file descriptor is indexed by integer.
+          Each file descriptor stores the opening file's information (which device(disk file, pipe, console, ...),
+          file id, current file offset, file open mode, etc.). This part of memory of file descriptor table is marked
+          as shared (PTE_SHARE) in page table entry.
+          When doing fork/spawn (spawn is a way to load a child process from file system executable), these part of
+          memory is shared among parent and children processes (page table entry is copied). So one process reads/writes
+          file, another process can notice it (e.g. file offset).
+
+2.Shell
+  A user process (user/init.c) sets file descriptors 0, 1 to console. Then use spawn to run shell (user/sh.c).
+  File descriptors 0,1 shares same file (console).
+  Shell implements I/O redirection: xxx <fileA, by open fileA with file descriptor fd. Substitute file descriptor 0
+  with fd (dup(fd, 0)).
+  Shell uses pipe. Pipe is implemented as a device just as disk/console. Pipe has one buffer, read pointer and
+  write pointer. Two file descriptors share the same buffer, one reads, and another writes. Parent process creates
+  these two file descriptors, and forks child process. Parent process use one file descriptor to write, child process
+  use another file descriptor to read.
+
+  Note: process A fork() process B. A and B's file descriptors are all same and share the same file.  
