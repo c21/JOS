@@ -1,0 +1,44 @@
+1.Initialization and transmitting packets
+  (1).Write the driver for network interface card (E1000 driver)
+      (kern/e1000.c, kern/e1000.h)
+      Use memory-mapped I/O to interact with device (E1000 network interface card):
+        By read/write memory to read/write device's registers (command, status, ...)
+      Use DMA to transmit data between driver and device.
+        By maintaining transmit/receive descriptor arrays in memory-mapped I/O, with
+        head and tail pointers.
+
+      (1).Initialize device for packet transmission,
+          and transmit packet from driver to E1000 device
+          (kern/e1000.c: tx_init(), try_transmit_pkt())
+          Use memory-mapped I/O to set device's registers for transmit descriptor array,
+          and transmit buffer. (descriptor contains status, command and pointer to buffer).
+
+          *transmit descriptor array is an array of struct tx_desc (kern/e1000.h),
+          device maintains the head pointer to consume descriptor (transmit packet),
+          driver (we) maintains the tail pointer to produce descriptor (make packet to transmit).
+          section 3.3.3, 3.4, 14.5 of https://pdos.csail.mit.edu/6.828/2014/readings/hardware/8254x_GBe_SDM.pdf
+         
+      (2).Transmit packet from network server environment to E1000 driver
+          (net/output.c)
+          Network server environment/process is used to serve request from user environment/process.
+          (network server is like file system server)
+          To transmit a packet, network server environment sends an IPC to another output environment.
+          Output environment is only used to receive network server request, then transmit packet to
+          E1000 device, by calling sys_try_transmit_pkt (system call exposed by E1000 device driver). 
+
+2.Receiving packets and the web server
+  (1).Initialize device for packet receive,
+      and receive packet from E1000 device to driver
+      (kern/e1000.c: rx_init(), try_receive_pkt())
+
+      *receive descriptor array is an array of struct rx_desc (kern/e1000.h),
+      device maintains the head pointer to produce descriptor (make packet to receive),
+      driver (we) maintains the tail pointer to consume descriptor (receive packet).
+      section 3.2, 14.4 of https://pdos.csail.mit.edu/6.828/2014/readings/hardware/8254x_GBe_SDM.pdf
+
+  (2).Receive packet from E1000 driver to network server environment
+      (net/input.c)
+      To receive a packet, network server environment waits to receive an IPC to another output environment.
+      Input environment is only used to receive packet from E1000 device driver, by calling 
+      sys_try_receive_pkt (system call exposed by E1000 device driver). then sends an IPC and packet to
+      network server environment.
