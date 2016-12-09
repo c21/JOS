@@ -1,0 +1,377 @@
+lab 1
+1.Intel 80x86 family of hardware
+  (1).8088,8086:
+      16-bit register
+        general purpose register: AX, BX, CX, DX
+        index register: SI, DI
+        pointer to stack register: BP(base pointer), SP(stack pointer)
+        segment register: CS(code segment), DS(data segment), SS(stack segment), ES(extra)
+        instruction pointer register: IP
+        store results of previous instruction: FLAGS
+      
+      real mode to access memory:
+        a process can access any memory address of other process.
+        the memory addess of process cannot be changed.
+        memory size: 1M (20bits)
+        use 2 16-bit registers (called selector and offset) to get a memory address:
+          physical memory address = 16 * selector + offset
+
+  (2).80286
+      16-bit register
+      protected mode to access memory:
+        a process cannot directly access memory address of other process.
+        the memory address of process can be changed (virtual memory, use descriptor table).
+        segment can entirely not be in memory, but moved to disk.
+          physical memory address = descriptor_table[selector].base_address + offset          
+          (selector register stores the index into descriptor table, descriptor table stores base address of segment)
+
+  (3).80386
+      32-bit register
+      32-bit protected mode to access memory:
+        offset register is 32 bits. Each segment can have size of 4G (32 bits).
+        Each segments are divided into pages (4K size per page).
+        Part of segment (pages) can not be in memory, but moved to disk.
+
+2.Physical memory, BIOS
+
++------------------+  <- 0xFFFFFFFF (4GB)
+|      32-bit      |
+|  memory mapped   |
+|     devices      |
+|                  |
+/\/\/\/\/\/\/\/\/\/\
+
+/\/\/\/\/\/\/\/\/\/\
+|                  |
+|      Unused      |
+|                  |
++------------------+  <- depends on amount of RAM
+|                  |
+|                  |
+| Extended Memory  |
+|                  |
+|                  |
++------------------+  <- 0x00100000 (1MB)
+|     BIOS ROM     |
++------------------+  <- 0x000F0000 (960KB)
+|  16-bit devices, |
+|  expansion ROMs  |
++------------------+  <- 0x000C0000 (768KB)
+|   VGA Display    |
++------------------+  <- 0x000A0000 (640KB)
+|                  |
+|    Low Memory    |
+|                  |
++------------------+  <- 0x00000000
+
+8088/8086: 1MB memory size
+Memory (RAM random access memory) for user: 0x00000 - 0xA0000
+BIOS (basic input output services, ROM read only memory): 0xF0000 - 0x100000
+  BIOS set up interrupt vector table at 0x0 - 0x400 (0-1024 bytes), search for a bootable device, if found
+  one bootable device, read data (boot loader, for disk: first boot sector 512B) from device,
+  jump to boot loader to run.
+    interrupt vector table: pointer(value of selector and offset registers) of interrupt handler (4 bytes)
+                            of that interrupt number (0-255)
+
+
+3.boot loader
+  (boot/boot.S, boot/main.c)
+  e.g. the first sector (512 bytes) in disk, loaded into memory by BIOS.
+  (1).set up a new global descriptor table (GDT) (change from real mode to protected mode, protected mode uss GDT)
+    global descriptor table: hold information (base, bound, permission) for each segment (code, data, ...).
+                             each entry in table is 8 bytes, a descriptor.
+                             base: 32-bit, bound: 20-bit (reason: base+bound can be used in page granularity,
+                             if 1 page is 4 KB, one segment can has maximal size of 4GB)
+                             permission: descriptor privilege level (DPL 2-bit): 0 kernel mode, 3 user mode
+    ldgt memory-address: memory-address specifies the size and address of global descriptor table,
+                         ldgt stores the size and address into global descriptor table register (GDTR)
+    Figure 3-8 in https://pdos.csail.mit.edu/6.828/2014/readings/ia32/IA32-3A.pdf
+  (2).switch from real mode to protected mode
+    segment registers(CS,DS,...) will contain the index of global descriptor table
+  (3).load kernel into memory
+    SP/ESP: the current address of stack top (stack pointer)
+    BP/EBP: the beginning address of stack to store current function information (base pointer)
+    +----------------------------+
+    | Parameter 1 for routine 1  | \
+    +----------------------------+  |
+    | First callers return addr. |   >  Stack frame 1
+    +----------------------------+  |
+    | First callers EBP          | /   <-- Routine f1's EBP
+    +----------------------------+
+ +->| local data                 | 
+ |  +----------------------------+
+ |  | Parameter 2 for routine 2  | \
+ |  +----------------------------+  |
+ |  | Parameter 1 for routine 2  |  |
+ |  +----------------------------+  |
+ |  | Return address, routine 1  |  |
+ |  +----------------------------+  |
+ +--| EBP value for routine 1    |   >  Stack frame 2 <-- Routine f2's EBP
+    +----------------------------+  |
+    | local data                 |  |
+    +----------------------------+
+    main calls f1(a), f1 calls f2(a,b)
+    when calling function:
+      store on stack:
+      (1).parameters from last to first (caller function does)
+      (2).return address (call instruction does)
+      (3).base pointer of caller function (callee function does)
+   In x86, stack grows from high address to low address (largest address -> lowest address).
+
+   read kernel into memory:
+    format for executable and object files in Unix systems: executable and linkable format (ELF) (header + sections)
+      .text: section for executable's code
+      .data: section for initialized global variables
+      .rodata: section for read-only data: string constants
+      .bss: section for uninitialized global variables
+    BIOS reads boot loader (one ELF file) into memory, boot loader reads kernel (another ELF file) into memory.
+    First read header of kernel's ELF file, then read each section of ELF file.
+    Use in and out instruction to read from disk.
+
+4.kernel
+  (kern/entry.S, kern/init.c)
+  (1).set up paging
+    The beginning virtual address of kernel: 0xf0100000 is loaded to physical address of memory: 0x00100000.
+    We should set up translation between virtual address to physical address (here we use paging).
+    Chapter 3.6 in https://pdos.csail.mit.edu/6.828/2014/readings/ia32/IA32-3A.pdf
+    (1).Set control register cr0 (Bit 31: enable paging and Bit 0: enable protected mode)
+    (2).Store base address of page directory into cr3 (cr3 is page directory base register (PDBR)).
+      x86 by default has two level page table
+      (32 bits virtual address: page directory (10 bits) + page table (10 bits) + offset (12 bits))
+      In this way, we change from segmentation to paging (actually segmentation and paging).
+      When given a virtual address: va (determined by registers cs and eip)
+      (1).first do segmentation: va' = descriptor_table[cs].base_address + eip
+      (2).then do paging: consult cr3, translate va' to physical address.
+  (2).set up new stack
+    change esp to the bottom (largest address) of new stack.
+  (3).initialize port for console (cga/vga)
+    read/write from console: in/out instruction to cga/vga ports.
+    
+    
+lab 2
+1.physical memory management
+  kern/pmap.c: boot_alloc(), mem_init(), page_init(), page_alloc(), page_free()
+  (1).get physical memory size
+      get size (npages) by using in/out instruction to interact with CMOS hardware.
+  (2).manage physical memory for each page (4KB)
+      first find a continuous memory (at end of bss: boot_alloc(): pages) to hold each page's
+      allocation information (struct PageInfo), use a pointer to link them together (page_free_list)
+
+2.virtual memory management
+  kern/pmap.c: pgdir_walk(), boot_map_region(), page_lookup(), page_remove(), page_insert()
+  read chapter 5 and 6 on: https://pdos.csail.mit.edu/6.828/2014/readings/i386/toc.htm
+  virtual address       ->        linear address       ->         physical address
+                  (segmentation)                    (paging)
+  (1).allocate a page for page directory
+      kern_pgdir
+  (2).initialize new page table (directory)
+      map kernel stack, and all kernel virtual address.
+  page directory/table entry flags:
+  PTE_P: page directory/table entry is valid (1) or not (0)
+  PTE_W: the page pointed by entry is writable (1) or not (0): default all pages are readable.
+  PTE_U: the page pointed by entry is readable/writable by user (1) or not(0).
+   
+  *flush/invalidate TLB: (remove a page directory entry or table entry from TLB):
+    (1).change value of cr3 (page directory base register) (overkill, flush all TLB)
+    (2).instruction: invlpg vaddr (remove TLB entries containing address vaddr)
+    
+    
+ lab 3
+ User Environments and Exception Handling
+  GCC inline assembly: http://www.ibiblio.org/gferg/ldp/GCC-Inline-Assembly-HOWTO.html
+    asm ( assembly code
+        : output operands                  /* optional */
+        : input operands                   /* optional */
+        : list of clobbered registers      /* optional */
+        );
+  (1).create environment (process) array
+  (2).use one environment, create a page for its page directory, initialize its page directory
+      (kernel part: >=UTOP as same as kernel's page directory), load its ELF executable (code, data, ...)
+      to its user part of virtual address. 
+  (3).interrupt/exception handling
+      read: https://pdos.csail.mit.edu/6.828/2014/readings/i386/c09.htm
+      set up interrupt descriptor table (IDT), each entry has the selector and offset for the
+      code to run. (totally 256 interrupt number: 0-255 entries), store the beginning address of IDT
+      at interrupt descriptor table register (IDTR).
+ 
+      When a user environment/process has an interrupt/exception:
+      (1).switch current stack to the stack defined in TSS
+      (2).push process's stack, flag, instruction registers on stack
+          +--------------------+ KSTACKTOP             
+          | 0x00000 | old SS   |     " - 4
+          |      old ESP       |     " - 8
+          |     old EFLAGS     |     " - 12
+          | 0x00000 | old CS   |     " - 16
+          |      old EIP       |     " - 20
+          |     error code     |     " - 24 (optional) <---- ESP
+          +--------------------+
+      (3).run code indicated by interrupt descriptor table (IDT)
+      * several interrupts:
+      3: breakpoint
+      14: page fault
+      >=17: unused interrupt (we can choose one, for example 0x30 as system call)
+            user stores arguments of system call in registers, uses "int 0x30" instruction to trap into OS.
+            OS needs to set up corresponding interrupt handler for 0x30 at interrupt descriptor table (IDT).
+            For the pointer passed from system call, check pointer value before dereference.
+            
+
+lab 4
+1.Multiprocessor Support and Cooperative Multitasking
+  (1).Operating system reads from BIOS to get CPUs information
+      (kern/mpconfig.c)
+      OS reads from BIOS's MP Configuration Table to get number of CPUs,
+      and the start physical address of local APICs for CPUs.
+
+      *read Chapter 4 of https://pdos.csail.mit.edu/6.828/2014/readings/ia32/MPspec.pdf
+      multiprocessor model (symmetric multiprocessing)
+      bootstrap processor (BSP): initialize the operating system
+      application processors (APs): activated by BSP
+    
+      Hardware has advanced programmable interrupt controller (APIC) to handle interrupt.
+      Each CPU has a local unit (local APIC). All CPUs shares an I/O unit (I/O APIC).
+      I/O APIC: distribute interrupts to local APICs.
+      local APIC: send interrupt to CPU, also have interprocessor interrupt (IPI), to
+                  allow its processor interrupt any other processor. 
+  (2).Map local APICs' physical address to virtual address
+      Use virtual address to interact with local APICs by memory-mapped I/O.
+  (3).bootstrap processor (BSP) loads application processors'(APs) boot code into memory,
+      sets up APs' stack, then sends interrupt to APs, each AP will run boot code. Each processor
+      eventually runs each OS.
+  (4).make a lock (spin lock) between CPUs in kernel mode, such that only one CPU can run kernel
+      code at a single time point (avoid race conditions in kernel code). CPU will release lock
+      when going to back to user mode. So multiple processes in user mode on different CPUs can
+      run at the same time.
+  (5).switch from kernel to user mode (schedule a runnable process)
+      according to process/environment's trap frame (record process's all registers information),
+      change from kernel's stack to user's stack, restore process's all registers information.
+
+      context switch between processes:
+      p1 -> kernel (hardware changes from user's stack to kernel's stack according TSS in GDT,
+                    and pushes p1's cs, eip, ss, esp, eflags on kernel's stack, then runs kernel's
+                    corresponding interrupt handler according to IDT)
+      kernel -> p2 (kernel pushes more p1's registers on kernel stack, stores p1's all registers value
+                    in p1's process table entry (trap frame). According to p2's trap frame in p2's
+                    process table entry, restores p2's all registers, issues iret instruction to let
+                    hardware switches back p2's user stack and instruction)
+                
+  * all processors (CPUs) share the same memory, run different instructions at the same time,
+    have their own different registers.
+
+2.Copy-on-Write Fork
+  (1).handle page fault in user mode
+      when there's an interrupt in user mode, it will trap into OS to its interrupt handler.
+      Interrupt handler will set up a stack for process itself to handle interrupt (user exception stack).
+      Interrupt handler will push trap frame on user exception stack, go back to user's interrupt handler.
+      User's interrupt handler will handle interrupt in user mode (when critical operation, use system call),
+      then directly go back to user's normal instruction.         
+  (2).implement copy-on-write fork
+      traditional fork drawback: fork will allocate memory for child process, then copy all memory from parent
+        process to child process. shell always use fork() then exec() (copy totally wastes time in this case).
+
+      copy-on-write: only copy page tables from parent to child process. Mark all page which is writable to
+        not writable, but copy-on-write. Then write a page fault handler in user mode. When a write operation
+        trapped to page fault handler, the handler allocates new page for the process, mark new page as writable.
+ 
+  * call convention:
+    caller function: 1. push arguments in reverse order on stack (argN, argN-1, ..., arg0).
+                     2. call instruction (push return address on stack).
+    callee function: 1. push caller's ebp on stack, set new ebp as current stack top (esp).
+                     2. ret instruction (pop return address from stack, then jump to return address).
+
+3.Preemptive Multitasking and Inter-Process communication (IPC)
+  (1).time interrupt
+      External interrupt is called IRQ (16 possible IRQs 0-15). To handle external interrupt (e.g. time
+      interrupt), register interrupt handler (as before) in IDT. To enable time interrupt, set interrupt
+      flag to 1 in eflags register. In JOS, we only enable time interrupt in user mode.
+  (2).Inter-Process communication (IPC)
+      Implement two system calls: sys_ipc_try_send, and sys_ipc_recv to pass message by allowing one
+      physical page mapped in two process's virtual memory.
+      
+
+lab 5
+1.The File System
+  (1).Structure
+      read/write unit: block (4KB).
+      superblock, bitmap (data block), data block.
+      on disk: block 0 (boot sector), block 1 (superblock), block 2...x (free block bitmap), block x+1... (data block)
+      superblock (struct Super): store number of blocks on disk, and root directory's metadata.
+      directory/file metadata (struct File): file name, size, type, pointer to data blocks (direct and indirect pointer) 
+      directory stores files metadata (not support hard link, store file metadata directly in directory, so not use inode)
+  (2).Run file system as a process/environment
+      Instead of putting file system in kernel, run file system as a process in user mode (fs/serv.c). 
+      (1).Give file system process privilege to do in/out instructions to access disk
+          Change user process's eflags IOPL bits, set it to 3, enable user process can do in/out instructions.
+      (2).Use file system process's memory 0x10000000 - 0xD0000000 (3GB) to map disk block 0-N.
+          block cache (fs/bc.c): read disk block by registering its own page fault handler.
+                                 write disk block by explicit calling function and its block/page dirty bit is set.
+          Use bitmap (one bit per block) to indicate the block is in use or not.
+      (3).Other process calls file system process's functions
+          Use IPC to pass function arguments and return values. File system is a loop to wait for IPC, processes IPC,
+          then returns value (can also be viewed as a kind of RPC).
+      (4).File descriptor for each file in each process
+          Each process has a memory area for file descriptor table. Each file descriptor is indexed by integer.
+          Each file descriptor stores the opening file's information (which device(disk file, pipe, console, ...),
+          file id, current file offset, file open mode, etc.). This part of memory of file descriptor table is marked
+          as shared (PTE_SHARE) in page table entry.
+          When doing fork/spawn (spawn is a way to load a child process from file system executable), these part of
+          memory is shared among parent and children processes (page table entry is copied). So one process reads/writes
+          file, another process can notice it (e.g. file offset).
+
+2.Shell
+  A user process (user/init.c) sets file descriptors 0, 1 to console. Then use spawn to run shell (user/sh.c).
+  File descriptors 0,1 shares same file (console).
+  Shell implements I/O redirection: xxx <fileA, by open fileA with file descriptor fd. Substitute file descriptor 0
+  with fd (dup(fd, 0)).
+  Shell uses pipe. Pipe is implemented as a device just as disk/console. Pipe has one buffer, read pointer and
+  write pointer. Two file descriptors share the same buffer, one reads, and another writes. Parent process creates
+  these two file descriptors, and forks child process. Parent process use one file descriptor to write, child process
+  use another file descriptor to read.
+
+  Note: process A fork() process B. A and B's file descriptors are all same and share the same file.
+  
+
+lab 6
+1.Initialization and transmitting packets
+  (1).Write the driver for network interface card (E1000 driver)
+      (kern/e1000.c, kern/e1000.h)
+      Use memory-mapped I/O to interact with device (E1000 network interface card):
+        By read/write memory to read/write device's registers (command, status, ...)
+      Use DMA to transmit data between driver and device.
+        By maintaining transmit/receive descriptor arrays in memory-mapped I/O, with
+        head and tail pointers.
+
+      (1).Initialize device for packet transmission,
+          and transmit packet from driver to E1000 device
+          (kern/e1000.c: tx_init(), try_transmit_pkt())
+          Use memory-mapped I/O to set device's registers for transmit descriptor array,
+          and transmit buffer. (descriptor contains status, command and pointer to buffer).
+
+          *transmit descriptor array is an array of struct tx_desc (kern/e1000.h),
+          device maintains the head pointer to consume descriptor (transmit packet),
+          driver (we) maintains the tail pointer to produce descriptor (make packet to transmit).
+          section 3.3.3, 3.4, 14.5 of https://pdos.csail.mit.edu/6.828/2014/readings/hardware/8254x_GBe_SDM.pdf
+         
+      (2).Transmit packet from network server environment to E1000 driver
+          (net/output.c)
+          Network server environment/process is used to serve request from user environment/process.
+          (network server is like file system server)
+          To transmit a packet, network server environment sends an IPC to another output environment.
+          Output environment is only used to receive network server request, then transmit packet to
+          E1000 device, by calling sys_try_transmit_pkt (system call exposed by E1000 device driver). 
+
+2.Receiving packets and the web server
+  (1).Initialize device for packet receive,
+      and receive packet from E1000 device to driver
+      (kern/e1000.c: rx_init(), try_receive_pkt())
+
+      *receive descriptor array is an array of struct rx_desc (kern/e1000.h),
+      device maintains the head pointer to produce descriptor (make packet to receive),
+      driver (we) maintains the tail pointer to consume descriptor (receive packet).
+      section 3.2, 14.4 of https://pdos.csail.mit.edu/6.828/2014/readings/hardware/8254x_GBe_SDM.pdf
+
+  (2).Receive packet from E1000 driver to network server environment
+      (net/input.c)
+      To receive a packet, network server environment waits to receive an IPC to another output environment.
+      Input environment is only used to receive packet from E1000 device driver, by calling 
+      sys_try_receive_pkt (system call exposed by E1000 device driver). then sends an IPC and packet to
+      network server environment.
